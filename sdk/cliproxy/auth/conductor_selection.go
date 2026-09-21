@@ -64,7 +64,7 @@ func (m *Manager) PluginSchedulerWantsAcrossPriorities() bool {
 }
 
 func isBuiltInSelector(selector Selector) bool {
-	switch selector.(type) {
+	switch unwrapPreferredAuthSelector(selector).(type) {
 	case *RoundRobinSelector, *WeightedRoundRobinSelector, *FillFirstSelector:
 		return true
 	default:
@@ -650,7 +650,9 @@ func selectionArgForSelector(selector Selector, routeModel string) string {
 func selectorContextForAvailableAuths(ctx context.Context, selector Selector, routeModel string) context.Context {
 	ctx = withWeightedSelectorStateModel(ctx, selector, routeModel)
 	if !isBuiltInSelector(selector) {
-		if _, sessionAffinity := selector.(*SessionAffinitySelector); !sessionAffinity {
+		switch selector.(type) {
+		case *PreferredAuthSelector, *SessionAffinitySelector:
+		default:
 			return ctx
 		}
 	}
@@ -1592,11 +1594,15 @@ func (m *Manager) CloseExecutionSession(sessionID string) {
 	}
 }
 
-func (m *Manager) useSchedulerFastPath() bool {
+func (m *Manager) useSchedulerFastPath(opts cliproxyexecutor.Options) bool {
 	if m == nil || m.scheduler == nil {
 		return false
 	}
-	return isBuiltInSelector(m.Selector())
+	selector := m.Selector()
+	if _, preferred := selector.(*PreferredAuthSelector); preferred && preferredAuthFromMetadata(opts.Metadata) != "" {
+		return false
+	}
+	return isBuiltInSelector(selector)
 }
 
 func shouldRetrySchedulerPick(err error) bool {
@@ -1887,7 +1893,7 @@ func (m *Manager) pickNext(ctx context.Context, provider, model string, opts cli
 	opts.Metadata[cliproxyexecutor.SessionAffinityProviderMetadataKey] = provider
 	opts.Metadata[cliproxyexecutor.SessionAffinityModelMetadataKey] = model
 
-	if m.hasPluginScheduler() || !m.useSchedulerFastPath() {
+	if m.hasPluginScheduler() || !m.useSchedulerFastPath(opts) {
 		return m.pickNextLegacy(ctx, provider, model, opts, tried)
 	}
 	eligibility := authSelectionEligibilityForRequest(ctx, opts)
@@ -2059,7 +2065,7 @@ func (m *Manager) pickNextMixed(ctx context.Context, providers []string, model s
 	opts.Metadata[cliproxyexecutor.SessionAffinityProviderMetadataKey] = "mixed"
 	opts.Metadata[cliproxyexecutor.SessionAffinityModelMetadataKey] = model
 
-	if m.hasPluginScheduler() || !m.useSchedulerFastPath() {
+	if m.hasPluginScheduler() || !m.useSchedulerFastPath(opts) {
 		return m.pickNextMixedLegacy(ctx, providers, model, opts, tried)
 	}
 

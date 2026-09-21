@@ -2,6 +2,7 @@ package cliproxy
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
@@ -16,8 +17,40 @@ func TestWeightedRoundRobinRoutingSelector(t *testing.T) {
 	if state.strategy != "weighted-round-robin" {
 		t.Fatalf("strategy = %q, want weighted-round-robin", state.strategy)
 	}
-	if _, ok := newRoutingSelector(state).(*coreauth.WeightedRoundRobinSelector); !ok {
-		t.Fatalf("selector type = %T, want *auth.WeightedRoundRobinSelector", newRoutingSelector(state))
+	selector := newRoutingSelector(state)
+	// The configured strategy now sits BENEATH the preferred-account layer, so
+	// the assertion unwraps instead of reading the outer type. Dropping the
+	// unwrap would let a future rewiring swap the strategy out unnoticed.
+	if _, ok := coreauth.UnwrapPreferredAuthSelector(selector).(*coreauth.WeightedRoundRobinSelector); !ok {
+		t.Fatalf("configured selector type = %T, want *auth.WeightedRoundRobinSelector", coreauth.UnwrapPreferredAuthSelector(selector))
+	}
+}
+
+// TestRoutingSelectorAlwaysWrapsPreferredAuth pins the layer the test above now
+// unwraps: every strategy must carry the preferred-account selector, otherwise
+// the X-CLIProxy-Preferred-Auth header is silently ignored for that strategy.
+func TestRoutingSelectorAlwaysWrapsPreferredAuth(t *testing.T) {
+	for _, tc := range []struct {
+		strategy string
+		want     coreauth.Selector
+	}{
+		{strategy: "wrr", want: &coreauth.WeightedRoundRobinSelector{}},
+		{strategy: "fill-first", want: &coreauth.FillFirstSelector{}},
+		{strategy: "round-robin", want: &coreauth.RoundRobinSelector{}},
+	} {
+		t.Run(tc.strategy, func(t *testing.T) {
+			state := normalizedRoutingRuntimeState(&internalconfig.Config{
+				Routing: internalconfig.RoutingConfig{Strategy: tc.strategy},
+			})
+			selector := newRoutingSelector(state)
+			if _, ok := selector.(*coreauth.PreferredAuthSelector); !ok {
+				t.Fatalf("outer selector type = %T, want *auth.PreferredAuthSelector", selector)
+			}
+			inner := coreauth.UnwrapPreferredAuthSelector(selector)
+			if reflect.TypeOf(inner) != reflect.TypeOf(tc.want) {
+				t.Fatalf("configured selector type = %T, want %T", inner, tc.want)
+			}
+		})
 	}
 }
 

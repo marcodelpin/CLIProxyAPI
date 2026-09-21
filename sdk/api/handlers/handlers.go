@@ -211,6 +211,11 @@ func requestExecutionMetadata(ctx context.Context) map[string]any {
 	}
 
 	meta := make(map[string]any)
+	if ginCtx != nil {
+		if preferredAuth := strings.TrimSpace(ginCtx.GetHeader("X-CLIProxy-Preferred-Auth")); preferredAuth != "" {
+			meta[coreexecutor.PreferredAuthMetadataKey] = preferredAuth
+		}
+	}
 	if key != "" {
 		meta[idempotencyKeyMetadataKey] = key
 	}

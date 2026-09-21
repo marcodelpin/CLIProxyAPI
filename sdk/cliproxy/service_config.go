@@ -72,6 +72,7 @@ func newRoutingSelector(state routingRuntimeState) coreauth.Selector {
 	default:
 		selector = &coreauth.RoundRobinSelector{}
 	}
+	selector = coreauth.NewPreferredAuthSelector(selector)
 	if state.sessionAffinity {
 		subagents := state.sessionAffinitySubagents
 		selector = coreauth.NewSessionAffinitySelectorWithConfig(coreauth.SessionAffinityConfig{

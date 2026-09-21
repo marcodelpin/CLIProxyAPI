@@ -32,6 +32,9 @@ const ServiceTierMetadataKey = "service_tier"
 const GenerateMetadataKey = "generate"
 
 const (
+	// PreferredAuthMetadataKey hints at a non-secret account label or email for cold selection.
+	// Unlike PinnedAuthMetadataKey, it permits fallback to any other eligible credential.
+	PreferredAuthMetadataKey = "preferred_auth"
 	// PinnedAuthMetadataKey locks execution to a specific auth ID.
 	PinnedAuthMetadataKey = "pinned_auth_id"
 	// SelectedAuthMetadataKey stores the auth ID selected by the scheduler.
