@@ -254,6 +254,93 @@ func TestSaveTokenRecord_MigratesMatchingLegacyClaudeCredential(t *testing.T) {
 	}
 }
 
+func TestSaveTokenRecord_ReplacesPreviousPlanCodexCredential(t *testing.T) {
+	authDir := t.TempDir()
+	previousFileName := codex.CredentialFileName("user@example.com", "free", "abc12345", true)
+	targetFileName := codex.CredentialFileName("user@example.com", "plus", "abc12345", true)
+	previousPath := filepath.Join(authDir, previousFileName)
+	targetPath := filepath.Join(authDir, targetFileName)
+
+	existing := map[string]any{
+		"type":          "codex",
+		"email":         "user@example.com",
+		"account_id":    "account-a",
+		"plan_type":     "free",
+		"access_token":  "old-token",
+		"refresh_token": "old-refresh",
+		"prefix":        "team",
+		"proxy_url":     "http://127.0.0.1:8080",
+		"disabled":      true,
+		"headers":       map[string]any{"User-Agent": "Custom"},
+		"models":        []any{"o3-mini"},
+	}
+	raw, errMarshal := json.Marshal(existing)
+	if errMarshal != nil {
+		t.Fatalf("marshal previous credential: %v", errMarshal)
+	}
+	if errWrite := os.WriteFile(previousPath, raw, 0o600); errWrite != nil {
+		t.Fatalf("write previous credential: %v", errWrite)
+	}
+
+	tokenStorage := &codex.CodexTokenStorage{
+		AccessToken:  "new-token",
+		RefreshToken: "new-refresh",
+		Email:        "user@example.com",
+		AccountID:    "account-a",
+		PlanType:     "plus",
+	}
+	record := &coreauth.Auth{
+		ID:       targetFileName,
+		Provider: "codex",
+		FileName: targetFileName,
+		Storage:  tokenStorage,
+		Metadata: map[string]any{
+			"email":      tokenStorage.Email,
+			"account_id": tokenStorage.AccountID,
+			"plan_type":  tokenStorage.PlanType,
+		},
+	}
+
+	h := NewHandler(&config.Config{AuthDir: authDir}, "", nil)
+	savedPath, errSave := h.saveTokenRecord(context.Background(), record)
+	if errSave != nil {
+		t.Fatalf("saveTokenRecord error: %v", errSave)
+	}
+	if savedPath != targetPath {
+		t.Fatalf("savedPath = %s, want %s", savedPath, targetPath)
+	}
+	if _, errStat := os.Stat(previousPath); !os.IsNotExist(errStat) {
+		t.Fatalf("previous plan credential still exists or stat failed: %v", errStat)
+	}
+
+	savedRaw, errRead := os.ReadFile(targetPath)
+	if errRead != nil {
+		t.Fatalf("read new credential: %v", errRead)
+	}
+	var saved map[string]any
+	if errUnmarshal := json.Unmarshal(savedRaw, &saved); errUnmarshal != nil {
+		t.Fatalf("unmarshal new credential: %v", errUnmarshal)
+	}
+	for key, want := range map[string]any{
+		"access_token":  "new-token",
+		"refresh_token": "new-refresh",
+		"plan_type":     "plus",
+		"prefix":        "team",
+		"proxy_url":     "http://127.0.0.1:8080",
+		"disabled":      true,
+	} {
+		if got := saved[key]; got != want {
+			t.Errorf("%s = %#v, want %#v", key, got, want)
+		}
+	}
+	if !reflect.DeepEqual(saved["headers"], map[string]any{"User-Agent": "Custom"}) {
+		t.Errorf("headers = %#v, want map[User-Agent:Custom]", saved["headers"])
+	}
+	if !reflect.DeepEqual(saved["models"], []any{"o3-mini"}) {
+		t.Errorf("models = %#v, want [o3-mini]", saved["models"])
+	}
+}
+
 func TestPatchAuthFileFields_DeletesPluginFields(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	authDir := t.TempDir()

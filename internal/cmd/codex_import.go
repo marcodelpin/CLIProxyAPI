@@ -143,9 +143,22 @@ func importCodexAuth(cfg *config.Config, authPath string) (string, error) {
 			coreauth.MergeExistingAuthMetadata(record, existing)
 		}
 	}
-	path, errSave := store.Save(context.Background(), record)
+	// An import creates the credential, as a login does, so a disabled record is
+	// still written when its file does not exist yet.
+	ctx := coreauth.WithAuthCreationIntent(context.Background())
+	// After a plan change the file name differs: the settings of the credential
+	// saved under the previous name move here, and that file goes once this is saved.
+	previous, errPrevious := codex.FindPreviousCredentials(ctx, store, record)
+	if errPrevious != nil {
+		return "", fmt.Errorf("find previous credentials: %w", errPrevious)
+	}
+	previous.MergeInto(record)
+	path, errSave := store.Save(ctx, record)
 	if errSave != nil {
 		return "", fmt.Errorf("save credential: %w", errSave)
+	}
+	if errDelete := previous.Delete(ctx, store, path); errDelete != nil {
+		return path, fmt.Errorf("credential saved but previous credential cleanup failed: %w", errDelete)
 	}
 	return path, nil
 }

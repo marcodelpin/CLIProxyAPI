@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
 	claudeauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/claude"
+	codexauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/codex"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
@@ -313,5 +315,129 @@ func TestManagerLogin_MultipleOrganizationsSharingEmailCoexist(t *testing.T) {
 	}
 	if len(records) != 2 {
 		t.Fatalf("store.List returned %d records, want 2 distinct organization records", len(records))
+	}
+}
+
+// TestManagerLogin_ReplacesPreviousPlanCodexCredential logs in again after a plan
+// change: the new file name differs from the saved one, the settings move to the
+// new credential and the file of the previous plan is removed.
+func TestManagerLogin_ReplacesPreviousPlanCodexCredential(t *testing.T) {
+	authDir := t.TempDir()
+	previousFileName := codexauth.CredentialFileName("user@example.com", "free", "abc12345", true)
+	targetFileName := codexauth.CredentialFileName("user@example.com", "plus", "abc12345", true)
+	previousPath := filepath.Join(authDir, previousFileName)
+	targetPath := filepath.Join(authDir, targetFileName)
+
+	existing := map[string]any{
+		"type":         "codex",
+		"email":        "user@example.com",
+		"account_id":   "account-a",
+		"plan_type":    "free",
+		"access_token": "old-token",
+		"prefix":       "team",
+		"proxy_url":    "http://127.0.0.1:8080",
+		"disabled":     true,
+		"headers":      map[string]any{"User-Agent": "Custom"},
+		"models":       []any{"o3-mini"},
+	}
+	raw, errMarshal := json.Marshal(existing)
+	if errMarshal != nil {
+		t.Fatalf("marshal previous credential: %v", errMarshal)
+	}
+	if errWrite := os.WriteFile(previousPath, raw, 0o600); errWrite != nil {
+		t.Fatalf("write previous credential: %v", errWrite)
+	}
+
+	// Built like the Codex login records: the account id is only in the storage.
+	newRecord := &coreauth.Auth{
+		ID:       targetFileName,
+		FileName: targetFileName,
+		Provider: "codex",
+		Storage: &codexauth.CodexTokenStorage{
+			Email:       "user@example.com",
+			AccountID:   "account-a",
+			PlanType:    "plus",
+			AccessToken: "new-token",
+		},
+		Metadata: map[string]any{
+			"email":     "user@example.com",
+			"plan_type": "plus",
+		},
+	}
+
+	store := NewFileTokenStore()
+	store.SetBaseDir(authDir)
+	mgr := NewManager(store, &dummyAuthenticator{provider: "codex", record: newRecord})
+
+	_, savedPath, errLogin := mgr.Login(context.Background(), "codex", &config.Config{AuthDir: authDir}, nil)
+	if errLogin != nil {
+		t.Fatalf("Login error: %v", errLogin)
+	}
+	if savedPath != targetPath {
+		t.Fatalf("savedPath = %s, want %s", savedPath, targetPath)
+	}
+	if _, errStat := os.Stat(previousPath); !os.IsNotExist(errStat) {
+		t.Fatalf("previous plan credential still exists or stat failed: %v", errStat)
+	}
+
+	savedRaw, errRead := os.ReadFile(targetPath)
+	if errRead != nil {
+		t.Fatalf("read new credential: %v", errRead)
+	}
+	var saved map[string]any
+	if errUnmarshal := json.Unmarshal(savedRaw, &saved); errUnmarshal != nil {
+		t.Fatalf("unmarshal new credential: %v", errUnmarshal)
+	}
+	for key, want := range map[string]any{
+		"access_token": "new-token",
+		"plan_type":    "plus",
+		"prefix":       "team",
+		"proxy_url":    "http://127.0.0.1:8080",
+		"disabled":     true,
+	} {
+		if got := saved[key]; got != want {
+			t.Errorf("%s = %#v, want %#v", key, got, want)
+		}
+	}
+	if !reflect.DeepEqual(saved["headers"], map[string]any{"User-Agent": "Custom"}) {
+		t.Errorf("headers = %#v, want map[User-Agent:Custom]", saved["headers"])
+	}
+	if !reflect.DeepEqual(saved["models"], []any{"o3-mini"}) {
+		t.Errorf("models = %#v, want [o3-mini]", saved["models"])
+	}
+}
+
+// TestManagerLogin_CodexWithoutBaseDirStillSaves keeps the behaviour of a store
+// without a base directory: it cannot be listed, so the plan migration is skipped
+// and the credential is saved relative to the working directory, as before.
+func TestManagerLogin_CodexWithoutBaseDirStillSaves(t *testing.T) {
+	t.Chdir(t.TempDir())
+	targetFileName := codexauth.CredentialFileName("user@example.com", "plus", "abc12345", true)
+	newRecord := &coreauth.Auth{
+		ID:       targetFileName,
+		FileName: targetFileName,
+		Provider: "codex",
+		Storage: &codexauth.CodexTokenStorage{
+			Email:       "user@example.com",
+			AccountID:   "account-a",
+			PlanType:    "plus",
+			AccessToken: "new-token",
+		},
+		Metadata: map[string]any{
+			"email":     "user@example.com",
+			"plan_type": "plus",
+		},
+	}
+
+	mgr := NewManager(NewFileTokenStore(), &dummyAuthenticator{provider: "codex", record: newRecord})
+	_, savedPath, errLogin := mgr.Login(context.Background(), "codex", &config.Config{}, nil)
+	if errLogin != nil {
+		t.Fatalf("Login error: %v", errLogin)
+	}
+	if savedPath != targetFileName {
+		t.Fatalf("savedPath = %s, want %s", savedPath, targetFileName)
+	}
+	if _, errStat := os.Stat(targetFileName); errStat != nil {
+		t.Fatalf("credential was not saved in the working directory: %v", errStat)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	claudeauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/claude"
+	codexauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/codex"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
@@ -94,6 +95,11 @@ func (m *Manager) Login(ctx context.Context, provider string, cfg *config.Config
 	if legacyClaudeCredential != nil {
 		coreauth.MergeExistingAuthMetadata(record, legacyClaudeCredential.Metadata)
 	}
+	previousCodexCredentials, errPrevious := codexauth.FindPreviousCredentials(ctx, m.store, record)
+	if errPrevious != nil {
+		return record, "", errPrevious
+	}
+	previousCodexCredentials.MergeInto(record)
 
 	savedPath, err := m.store.Save(coreauth.WithAuthCreationIntent(ctx), record)
 	if err != nil {
@@ -110,6 +116,9 @@ func (m *Manager) Login(ctx context.Context, provider string, cfg *config.Config
 		if errDelete := m.store.Delete(ctx, legacyID); errDelete != nil {
 			return record, savedPath, fmt.Errorf("cliproxy auth: canonical Claude credential saved but legacy credential cleanup failed: %w", errDelete)
 		}
+	}
+	if errDelete := previousCodexCredentials.Delete(ctx, m.store, savedPath); errDelete != nil {
+		return record, savedPath, fmt.Errorf("cliproxy auth: Codex credential saved but previous credential cleanup failed: %w", errDelete)
 	}
 	return record, savedPath, nil
 }

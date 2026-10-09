@@ -958,6 +958,11 @@ func (h *Handler) saveTokenRecord(ctx context.Context, record *coreauth.Auth) (s
 	if legacyClaudeCredential != nil {
 		coreauth.MergeExistingAuthMetadata(record, legacyClaudeCredential.Metadata)
 	}
+	previousCodexCredentials, errPrevious := codex.FindPreviousCredentials(ctx, store, record)
+	if errPrevious != nil {
+		return "", errPrevious
+	}
+	previousCodexCredentials.MergeInto(record)
 	if h.postAuthHook != nil {
 		if err := h.postAuthHook(ctx, record); err != nil {
 			return "", fmt.Errorf("post-auth hook failed: %w", err)
@@ -978,6 +983,9 @@ func (h *Handler) saveTokenRecord(ctx context.Context, record *coreauth.Auth) (s
 		if errDelete := store.Delete(ctx, legacyID); errDelete != nil {
 			return savedPath, fmt.Errorf("canonical Claude credential saved but legacy credential cleanup failed: %w", errDelete)
 		}
+	}
+	if errDelete := previousCodexCredentials.Delete(ctx, store, savedPath); errDelete != nil {
+		return savedPath, fmt.Errorf("Codex credential saved but previous credential cleanup failed: %w", errDelete)
 	}
 	if h.postAuthPersistHook != nil {
 		persistedRecord := record

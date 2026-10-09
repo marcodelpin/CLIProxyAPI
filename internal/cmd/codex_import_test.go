@@ -201,6 +201,102 @@ func TestImportCodexAuthKeepsExistingSettings(t *testing.T) {
 	}
 }
 
+// TestImportCodexAuthReplacesPreviousPlanCredential imports one account twice with
+// a plan change in between: the settings move to the new file and the file of the
+// previous plan is removed, so the account keeps a single credential.
+func TestImportCodexAuthReplacesPreviousPlanCredential(t *testing.T) {
+	t.Cleanup(func() { sdkAuth.RegisterTokenStore(nil) })
+	sdkAuth.RegisterTokenStore(sdkAuth.NewFileTokenStore())
+
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "auth.json")
+	authDir := filepath.Join(root, "imported")
+	writeSource := func(plan, accessToken string) {
+		t.Helper()
+		raw, errMarshal := json.Marshal(map[string]any{
+			"tokens": map[string]any{
+				"id_token": testJWT(t, map[string]any{
+					"email": "dev@example.com",
+					"https://api.openai.com/auth": map[string]any{
+						"chatgpt_account_id": "account-from-token",
+						"chatgpt_plan_type":  plan,
+					},
+				}),
+				"access_token":  accessToken,
+				"refresh_token": "refresh-" + plan,
+			},
+		})
+		if errMarshal != nil {
+			t.Fatal(errMarshal)
+		}
+		if errWrite := os.WriteFile(sourcePath, raw, 0o600); errWrite != nil {
+			t.Fatal(errWrite)
+		}
+	}
+
+	writeSource("free", "access-free")
+	freePath, errFree := importCodexAuth(&config.Config{AuthDir: authDir}, sourcePath)
+	if errFree != nil {
+		t.Fatalf("first importCodexAuth() error = %v", errFree)
+	}
+	raw, errRead := os.ReadFile(freePath)
+	if errRead != nil {
+		t.Fatal(errRead)
+	}
+	var saved map[string]any
+	if errUnmarshal := json.Unmarshal(raw, &saved); errUnmarshal != nil {
+		t.Fatal(errUnmarshal)
+	}
+	saved["disabled"] = true
+	saved["proxy_url"] = "http://127.0.0.1:9"
+	edited, errEdit := json.Marshal(saved)
+	if errEdit != nil {
+		t.Fatal(errEdit)
+	}
+	if errWrite := os.WriteFile(freePath, edited, 0o600); errWrite != nil {
+		t.Fatal(errWrite)
+	}
+
+	writeSource("plus", "access-plus")
+	plusPath, errPlus := importCodexAuth(&config.Config{AuthDir: authDir}, sourcePath)
+	if errPlus != nil {
+		t.Fatalf("second importCodexAuth() error = %v", errPlus)
+	}
+	if !strings.HasSuffix(plusPath, "-plus.json") {
+		t.Fatalf("second import wrote %q, want the plus file name", plusPath)
+	}
+	if _, errStat := os.Stat(freePath); !os.IsNotExist(errStat) {
+		t.Fatalf("the credential of the previous plan still exists or stat failed: %v", errStat)
+	}
+	entries, errDir := os.ReadDir(authDir)
+	if errDir != nil {
+		t.Fatal(errDir)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("auth dir holds %d entries, want the single new credential", len(entries))
+	}
+	raw, errRead = os.ReadFile(plusPath)
+	if errRead != nil {
+		t.Fatal(errRead)
+	}
+	var after map[string]any
+	if errUnmarshal := json.Unmarshal(raw, &after); errUnmarshal != nil {
+		t.Fatal(errUnmarshal)
+	}
+	if disabled, _ := after["disabled"].(bool); !disabled {
+		t.Fatalf("disabled = %v after the plan change, want true", after["disabled"])
+	}
+	for key, want := range map[string]string{
+		"proxy_url":    "http://127.0.0.1:9",
+		"access_token": "access-plus",
+		"plan_type":    "plus",
+	} {
+		if got, _ := after[key].(string); got != want {
+			t.Fatalf("%s = %q after the plan change, want %q", key, got, want)
+		}
+	}
+}
+
 // TestReadExistingCredentialIgnoresSymlink checks that a link at the credential
 // path is not read through, so nothing outside the auth directory reaches an import.
 func TestReadExistingCredentialIgnoresSymlink(t *testing.T) {
