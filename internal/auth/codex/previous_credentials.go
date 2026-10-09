@@ -116,11 +116,19 @@ func isPreviousCredential(candidate *coreauth.Auth, targetName, email, accountID
 	if name == "" || strings.EqualFold(name, targetName) {
 		return false
 	}
+	candidateEmail := metadataField(candidate.Metadata, "email")
+	if !strings.EqualFold(candidateEmail, email) ||
+		!strings.EqualFold(metadataField(candidate.Metadata, "account_id"), accountID) {
+		return false
+	}
 	planType := metadataField(candidate.Metadata, "plan_type")
-	return strings.EqualFold(metadataField(candidate.Metadata, "email"), email) &&
-		strings.EqualFold(metadataField(candidate.Metadata, "account_id"), accountID) &&
-		(strings.EqualFold(name, CredentialFileName(email, planType, accountHash, true)) ||
-			strings.EqualFold(name, CredentialFileName(email, planType, "", true)))
+	for _, hash := range []string{accountHash, ""} {
+		if strings.EqualFold(name, CredentialFileName(email, planType, hash, true)) ||
+			strings.EqualFold(name, unsanitizedCredentialFileName(candidateEmail, planType, hash)) {
+			return true
+		}
+	}
+	return false
 }
 
 // credentialIdentity reads email, account id and plan type from the record

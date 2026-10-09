@@ -297,6 +297,70 @@ func TestImportCodexAuthReplacesPreviousPlanCredential(t *testing.T) {
 	}
 }
 
+// TestImportCodexAuthNeverRemovesItsSource imports a native file that sits in the
+// auth directory under the name of a previous plan and also carries the top-level
+// fields of a credential: the plan-change cleanup must not delete the source.
+func TestImportCodexAuthNeverRemovesItsSource(t *testing.T) {
+	t.Cleanup(func() { sdkAuth.RegisterTokenStore(nil) })
+	sdkAuth.RegisterTokenStore(sdkAuth.NewFileTokenStore())
+
+	root := t.TempDir()
+	authDir := filepath.Join(root, "imported")
+	nativeFor := func(plan string) map[string]any {
+		return map[string]any{
+			"tokens": map[string]any{
+				"id_token": testJWT(t, map[string]any{
+					"email": "dev@example.com",
+					"https://api.openai.com/auth": map[string]any{
+						"chatgpt_account_id": "account-from-token",
+						"chatgpt_plan_type":  plan,
+					},
+				}),
+				"access_token":  "access-" + plan,
+				"refresh_token": "refresh-" + plan,
+			},
+		}
+	}
+	outside := filepath.Join(root, "auth.json")
+	raw, errMarshal := json.Marshal(nativeFor("free"))
+	if errMarshal != nil {
+		t.Fatal(errMarshal)
+	}
+	if errWrite := os.WriteFile(outside, raw, 0o600); errWrite != nil {
+		t.Fatal(errWrite)
+	}
+	freePath, errFree := importCodexAuth(&config.Config{AuthDir: authDir}, outside)
+	if errFree != nil {
+		t.Fatalf("first importCodexAuth() error = %v", errFree)
+	}
+
+	// Replace the free credential with a native plus file that also looks like a
+	// stored credential of the free plan, then import that very file.
+	source := nativeFor("plus")
+	source["type"], source["email"], source["account_id"], source["plan_type"] = "codex", "dev@example.com", "account-from-token", "free"
+	sourceJSON, errSource := json.Marshal(source)
+	if errSource != nil {
+		t.Fatal(errSource)
+	}
+	if errWrite := os.WriteFile(freePath, sourceJSON, 0o600); errWrite != nil {
+		t.Fatal(errWrite)
+	}
+	plusPath, errPlus := importCodexAuth(&config.Config{AuthDir: authDir}, freePath)
+	if errPlus != nil {
+		t.Fatalf("second importCodexAuth() error = %v", errPlus)
+	}
+	if plusPath == freePath {
+		t.Fatalf("second import wrote over its source %q", freePath)
+	}
+	after, errRead := os.ReadFile(freePath)
+	if errRead != nil {
+		t.Fatalf("the import source was removed: %v", errRead)
+	}
+	if string(after) != string(sourceJSON) {
+		t.Fatal("the import source was modified")
+	}
+}
+
 // TestReadExistingCredentialIgnoresSymlink checks that a link at the credential
 // path is not read through, so nothing outside the auth directory reaches an import.
 func TestReadExistingCredentialIgnoresSymlink(t *testing.T) {

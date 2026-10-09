@@ -152,6 +152,7 @@ func importCodexAuth(cfg *config.Config, authPath string) (string, error) {
 	if errPrevious != nil {
 		return "", fmt.Errorf("find previous credentials: %w", errPrevious)
 	}
+	previous = withoutSource(previous, cfg.AuthDir, rawPath)
 	previous.MergeInto(record)
 	path, errSave := store.Save(ctx, record)
 	if errSave != nil {
@@ -161,6 +162,21 @@ func importCodexAuth(cfg *config.Config, authPath string) (string, error) {
 		return path, fmt.Errorf("credential saved but previous credential cleanup failed: %w", errDelete)
 	}
 	return path, nil
+}
+
+// withoutSource drops a previous credential that is the import source itself, so the
+// cleanup after the save never removes the file being imported.
+func withoutSource(previous codex.PreviousCredentials, authDir, source string) codex.PreviousCredentials {
+	if strings.TrimSpace(authDir) == "" {
+		return previous
+	}
+	var kept codex.PreviousCredentials
+	for _, candidate := range previous {
+		if !sameFile(source, filepath.Join(authDir, candidate.ID)) {
+			kept = append(kept, candidate)
+		}
+	}
+	return kept
 }
 
 // sameFile reports whether both paths resolve to one existing file. Symlinks are

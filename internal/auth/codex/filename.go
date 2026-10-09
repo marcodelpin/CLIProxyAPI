@@ -15,9 +15,17 @@ import (
 // is always a bare file name that cannot escape the credentials directory when it
 // is joined onto it.
 func CredentialFileName(email, planType, hashAccountID string, includeProviderPrefix bool) string {
-	email = sanitizeFileNameComponent(email)
+	return formatCredentialFileName(sanitizeFileNameComponent(email), planType, sanitizeFileNameComponent(hashAccountID), includeProviderPrefix)
+}
+
+// unsanitizedCredentialFileName returns the name CredentialFileName produced before
+// it sanitized its components, so that credentials saved then can still be found.
+func unsanitizedCredentialFileName(email, planType, hashAccountID string) string {
+	return formatCredentialFileName(strings.TrimSpace(email), planType, strings.TrimSpace(hashAccountID), true)
+}
+
+func formatCredentialFileName(email, planType, hashAccountID string, includeProviderPrefix bool) string {
 	plan := normalizePlanTypeForFilename(planType)
-	hashAccountID = sanitizeFileNameComponent(hashAccountID)
 
 	prefix := ""
 	if includeProviderPrefix {

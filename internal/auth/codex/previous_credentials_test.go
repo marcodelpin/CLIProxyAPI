@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,6 +97,34 @@ func TestFindPreviousCredentials(t *testing.T) {
 			}
 			if len(got) > 1 || (len(got) == 1) != tt.wantMatch {
 				t.Fatalf("FindPreviousCredentials() returned %d credentials, want match = %v", len(got), tt.wantMatch)
+			}
+		})
+	}
+}
+
+// TestFindPreviousCredentialsRecognizesNamesBeforeTheSanitizer covers a credential
+// saved before CredentialFileName replaced characters such as "?" in the email: its
+// name differs from the one generated now, for the same account and email.
+func TestFindPreviousCredentialsRecognizesNamesBeforeTheSanitizer(t *testing.T) {
+	const email = "a?b@example.com"
+	target := previousTestTarget()
+	target.Metadata["email"] = email
+	target.ID = CredentialFileName(email, "plus", previousTestHash, true)
+	target.FileName = target.ID
+	for _, name := range []string{
+		"codex-abc12345-a?b@example.com-plus.json",
+		"codex-abc12345-a?b@example.com-free.json",
+		"codex-a?b@example.com-free.json",
+	} {
+		t.Run(name, func(t *testing.T) {
+			planType := "free"
+			if strings.HasSuffix(name, "-plus.json") {
+				planType = "plus"
+			}
+			candidate := previousTestCandidate(name, email, previousTestAccount, planType)
+			got, err := FindPreviousCredentials(context.Background(), &previousCredentialStore{records: []*coreauth.Auth{candidate}}, target)
+			if err != nil || len(got) != 1 {
+				t.Fatalf("FindPreviousCredentials() = %d credentials, %v, want 1, nil", len(got), err)
 			}
 		})
 	}
