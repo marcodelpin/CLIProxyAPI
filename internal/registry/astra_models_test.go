@@ -22,7 +22,7 @@ func TestEmbeddedCodexCatalogsIncludeAstraAndSol(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, models := range [][]*ModelInfo{tc.embedded, tc.get()} {
-				for _, id := range []string{"gpt-6-astra", "gpt-5.6-sol"} {
+				for _, id := range []string{"gpt-6-astra", "gpt-5.6-sol", "gpt-6.1-sol"} {
 					var found *ModelInfo
 					for _, model := range models {
 						if model != nil && model.ID == id {
@@ -66,7 +66,7 @@ func TestEmbeddedCodexClientCatalogIncludesAstraUltraAndSol(t *testing.T) {
 	if err := json.Unmarshal(embeddedCodexClientModelsJSON, &catalog); err != nil {
 		t.Fatalf("decode embedded Codex client models: %v", err)
 	}
-	for _, id := range []string{"gpt-6-astra", "gpt-5.6-sol"} {
+	for _, id := range []string{"gpt-6-astra", "gpt-5.6-sol", "gpt-6.1-sol"} {
 		found := false
 		for _, model := range catalog.Models {
 			if model.Slug != id {
